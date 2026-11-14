@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>试打一通 · 安心伴</title>
+<style>
+:root{color-scheme:light;--ink:#183e32;--green:#194d3c;--paper:#f7f6ee;--lime:#e1f1af}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:18px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+main{width:min(100% - 32px,540px);margin:clamp(14px,4vh,48px) auto 24px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;min-height:44px}
+header strong{font-size:23px;letter-spacing:.05em}
+a{color:var(--green);text-underline-offset:4px}
+header a{display:inline-flex;align-items:center;min-height:44px;text-decoration:none;font-weight:600}
+.card{overflow:hidden;border-radius:26px;border:1px solid #cbd5c5;background:#fffefa;box-shadow:0 8px 28px #344b3410}
+.line{position:relative;isolation:isolate;overflow:hidden;padding:24px 24px 30px;min-height:208px;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fffef1;background:#143e31;text-align:center}
+.line:before,.line:after{content:"";position:absolute;z-index:-1;width:210px;height:210px;border-radius:50%;border:1px solid #446453;box-shadow:0 0 0 16px #143e31,0 0 0 17px #446453,0 0 0 33px #143e31,0 0 0 34px #446453}
+.line:before{left:-177px;bottom:-96px}.line:after{right:-170px;top:-90px}
+.receiver{height:68px;width:68px;display:grid;place-items:center;background:var(--lime);color:#174634;border-radius:23px;font:45px/1 Georgia,serif}
+h1{font-size:clamp(28px,5vw,36px);line-height:1.3;margin:12px 0 0}
+.line small{display:block;font-size:16px;color:#dbebce;margin-top:4px}
+.controls{padding:22px clamp(16px,4vw,32px) 24px}
+#status{margin:0 0 15px;font-size:20px;line-height:1.55;min-height:31px}
+button{display:block;width:100%;min-height:62px;border:0;border-radius:14px;background:var(--green);color:white;line-height:1.35;font-family:inherit;font-size:22px;font-weight:650;cursor:pointer}
+button.secondary{color:var(--green);background:#eef2e7;min-height:52px;font-size:18px;margin-top:10px}
+button:disabled{background:#587062;cursor:wait}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #a65b18;outline-offset:3px}
+body[data-stage=talk] #action{background:#873d30}
+body[data-stage=talk] .receiver{box-shadow:0 0 0 7px #426552}
+#heard{margin:14px 0;background:#f1f4eb;border-left:3px solid #739375;border-radius:6px;padding:12px 15px;overflow-wrap:anywhere}
+#record{display:block;padding-top:12px;font-weight:650;min-height:44px}
+audio{width:100%;margin-top:12px}
+footer{text-align:center;color:#526653;font-size:16px;margin:16px 0}
+[hidden]{display:none!important}
+@media(max-height:650px){.line{min-height:155px;padding:16px}.receiver{width:52px;height:52px;font-size:34px}.controls{padding-block:16px}header{margin-bottom:9px}}
+</style>
+<body data-stage="dial"><main><header><strong>安心伴</strong><a href="/">返回首页 ›</a></header>
+<section class="card" aria-labelledby="callTitle">
+<div class="line"><span class="receiver" aria-hidden="true">☎︎</span><h1 id="callTitle">试打一通</h1><small>安心伴电话助手</small></div>
+<div class="controls"><p id="status" role="status">你扮演来电的人，安心伴来接。</p>
+<button id="action">拨给安心伴</button><button id="example" class="secondary" hidden>用示例语音试试</button>
+<audio id="player" aria-label="通话声音" controls hidden></audio><blockquote id="heard" hidden></blockquote>
+<a href="/#call" id="record" hidden>查看父母收到的记录 →</a></div></section>
+<footer>语音仅在这台电脑上处理</footer></main>
+<script>
+const byId=id=>document.getElementById(id);
+const action=byId('action'), statusText=byId('status'), player=byId('player'), example=byId('example');
+let stream, recorder, timer, stage='dial';
+function screen(next, note, label){
+  stage=next; document.body.dataset.stage=next;
+  byId('callTitle').textContent={greeting:'安心伴在说话',ready:'轮到你说',talk:'正在听你说',busy:'请稍等',again:'通话已结束'}[next] || '试打一通';
+  statusText.textContent=note; action.textContent=label;
+  action.disabled=next==='busy'; example.hidden=next!=='ready';
+}
+function ready(note='点「开始说话」，告诉安心伴你的来意。'){
+  screen('ready',note,'开始说话');
+}
+function release(){clearTimeout(timer);stream?.getTracks().forEach(track=>track.stop());stream=null;}
+function play(path, done){
+  player.hidden=true; player.src=path; player.onended=done;
+  player.play().catch(()=>{player.hidden=false;statusText.textContent+=' 可点播放器听声音。';});
+  if(stage==='again') player.hidden=false;
+}
+async function submit(blob){
+  screen('busy','安心伴正在听这段语音…','正在处理');
+  try{
+    const ctx=new OfflineAudioContext(1,1,8000);
+    const source=await ctx.decodeAudioData(await blob.arrayBuffer());
+    const len=Math.min(source.length,160000);
+    const pcm=new Int16Array(len);
+    for(let i=0;i<len;i++) pcm[i]=Math.round(Math.max(-1,Math.min(1,source.getChannelData(0)[i]))*32767);
+    const res=await fetch('/voice/trial',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:pcm});
+    if(!res.ok) throw Error(res.status===409?'另一通电话正在使用安心伴，请稍后再试。':'本机语音服务暂时没有回应，请再试一次。');
+    const result=await res.json();
+    if(!result.text){ready('没有听清，可以再说一次。');play(result.audio,null);return;}
+    byId('heard').hidden=false;byId('heard').textContent='听到的来意：'+result.text;
+    byId('record').hidden=false;screen('again',result.reply,'再试一通');play(result.audio,null);
+  }catch(error){ready(error.message.startsWith('另一通')||error.message.startsWith('本机')?error.message:'这段语音未能处理，请重试或选用示例。');}
+}
+async function capture(){
+  player.pause();
+  screen('busy','请允许使用麦克风。','正在打开麦克风');
+  try{
+    if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error();
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    recorder=new MediaRecorder(stream);const chunks=[];
+    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+    recorder.onstop=()=>{release();submit(new Blob(chunks,{type:recorder.mimeType}));};
+    recorder.start();screen('talk','说完点下方按钮，最多录 20 秒。','说完了');
+    timer=setTimeout(()=>{if(recorder.state==='recording')recorder.stop();},20000);
+  }catch{release();ready('麦克风没有开启。可以允许麦克风后重试，也可以用示例语音。');}
+}
+action.onclick=()=>{
+  if(stage==='ready')return capture();
+  if(stage==='talk'){action.disabled=true;return recorder.stop();}
+  if(stage==='greeting'){player.pause();return ready();}
+  byId('record').hidden=byId('heard').hidden=true;
+  screen('greeting','听完问候就可以说话。','跳过问候');
+  play('/voice/greeting.wav',()=>ready());
+};
+example.onclick=async()=>{
+  player.pause();screen('busy','正在读取示例语音…','正在处理');
+  try{const res=await fetch('/voice/examples/caller.wav');if(!res.ok)throw Error();await submit(await res.blob());}
+  catch{ready('没有读到示例，请再试一次。');}
+};
+window.addEventListener('pagehide',()=>{if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop();}release();});
+</script></body></html>

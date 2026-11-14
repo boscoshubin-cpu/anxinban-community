@@ -16,7 +16,7 @@
 
 ## 数据与边界
 
-输入留在页面内存，刷新即清空；不会上传，也不会向其他设备发送通知。关键词没有命中不代表消息可信。此版本没有接入大模型、Sherlock、电话、短信、推送服务或生产账号系统。
+输入留在页面内存，刷新即清空；不会上传，也不会向其他设备发送通知。关键词没有命中不代表消息可信。静态页面支持文字演示。可选的本机电话服务支持接听总机转来的语音。
 
 ## 检查
 
@@ -27,3 +27,41 @@
 ## 许可
 
 [MIT](LICENSE)
+
+## 本机电话语音预览
+
+首页「帮我看看 → 查看代接记录」可显示接入线路的中文转写和关键词提醒。需要有权接入的电话音频源。静态网页仍可单独打开，语音入口只在下述本机服务上显示。
+
+语音版已在 Apple Silicon Mac 上验证。请先准备 Python 3.12、FFmpeg 和 macOS 普通话系统声音 Tingting。在终端进入仓库目录后执行以下命令。第一次启动需要下载约 148 MB 的多语言识别模型，之后可离线使用。
+
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r voice/requirements.txt
+mkdir -p models
+curl -fL --retry 2 -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+echo '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe  models/ggml-base.bin' | shasum -a 256 -c -
+python voice/server.py --model models/ggml-base.bin
+```
+
+保持终端打开，访问 [本机试打页](http://127.0.0.1:8766/try)。点「拨给安心伴」，听完问候后选「开始说话」或「用示例语音试试」。点「查看父母收到的记录」可阅读本次转写与答复。按 Ctrl+C 可停止服务。
+
+打开 http://127.0.0.1:8766 。同机 Asterisk 的测试分机可在 Answer() 后调用 `AudioSocket(${SHELL(cat /proc/sys/kernel/random/uuid | tr -d '\n')},127.0.0.1:9092)`。该配置把这条分机的输入音频交给安心伴。如需在父母与对方通话时辅助，电话系统还需建立双方通话并将音频副本送入服务。
+
+服务仅监听回环地址，一次接收一条 8 kHz 单声道 PCM 音频流，每约六秒转写一段。语音及转写仅在内存中处理，页面会展示最近一通的内容。此版本用于单机验证，未绑定家庭手机号或发出真实通知。
+
+没有电话线路时，可用合成语音测试：准备 8 kHz、16 位单声道 PCM WAV，运行 `python voice/replay.py 测试.wav`，然后在本机语音页查看。
+
+### 转给安心伴代接
+
+本机 macOS 语音服务使用普通话 Tingting 声音和 ffmpeg。9092 接收旁听音频；9093 用于代接，会向来电方播放问候，等对方说明来意，再根据转写选择一条预设答复并结束通话。网页「帮我看看 → 查看代接记录」展示双方说过的话。当前服务一次处理一通。
+
+将 [分流配置](voice/extensions.conf) 包含到 Asterisk 的拨号计划，把经过认证的入局线路转到 `anxinban-in,s,1`。将全局变量 `ANXINBAN_FAMILY_DIAL` 设为父母实际注册的分机，如 `PJSIP/parent`，避免指回同一入局号码。配置需要 app_dial、app_audiosocket、func_db、func_strings 和 Linux 下的 func_shell（读取内核生成的 UUID）。总机与语音服务在不同机器上运行时，将总机的本地 9093 端口用私有隧道连到语音服务的回环端口。
+
+在 Asterisk CLI 中使用 `database put anxinban-contacts <熟人号码> 1` 维护名单，通过 `database del anxinban-contacts <熟人号码>` 移除。中国号码按国内拨号格式保存，入局的 +86 或 0086 前缀会移除。命中名单的号码走父母分机，其余来电由助手接听。名单仅用于响铃分流。陌生号码的来电显示不能证明身份。
+
+家庭原手机号是否能按联系人选择性转接取决于线路。常见的无应答转接也可能转走熟人的未接来电。请先在独立测试分机验证来电方、家庭分机与助手的双向声音。
+
+网页中的两段试听由运行服务的 Mac 根据虚构脚本合成。麦克风试打时，服务会实际转写输入，并按关键词选择预设答复。实时记录只在本地服务内存中保留最近一通，下一通覆盖，停止服务即清空。
+
+在本机服务上打开 http://127.0.0.1:8766/try ，即可用麦克风扮演来电方。也可以用内置样音试打。页面会播放助手答复，并提供前往父母代接记录的入口。这一路使用本机识别和相同的应答规则，无需电话线路。
